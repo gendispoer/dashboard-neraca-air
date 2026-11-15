@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Detail · Dashboard Neraca Air</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Great+Vibes&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap">
+<link rel="stylesheet" href="../css/style.css">
+</head>
+<body data-page="detail">
+
+<div class="bg" aria-hidden="true"><i class="b1"></i><i class="b2"></i><i class="b3"></i><i class="b4"></i></div>
+
+<div id="app">
+  <header class="bar wrap">
+    <div class="barin glass">
+      <div class="brand"><b>Neraca Air</b></div>
+      <div class="filters">
+        <div class="dd" id="ddYear"><button type="button" aria-haspopup="true" aria-expanded="false" id="btnYear">Year <small id="lblYear"></small></button>
+          <div class="panel" role="group" aria-label="Pilih tahun" hidden><h4>Tahun</h4><div class="chips" id="yearChips"></div></div></div>
+        <div class="dd" id="ddMonth"><button type="button" aria-haspopup="true" aria-expanded="false" id="btnMonth">Month <small id="lblMonth"></small></button>
+          <div class="panel" role="group" aria-label="Pilih bulan" hidden id="monthPanel"></div></div>
+      </div>
+    </div>
+  </header>
+  <div class="wrap">
+    <div class="status glass">
+      <div id="srcText"><span class="dot"></span>Menghubungkan penyimpanan…</div>
+      <div class="acts">
+        <button class="btn" type="button" id="btnDrive" hidden>Tautkan Drive</button>
+      </div>
+    </div>
+    <div id="notice"></div>
+  </div>
+
+  <main class="wrap">
+    <section id="pg-detail" data-page="detail">
+      <div class="head"><h1>Detail</h1><p>Impor file, lalu ubah angka yang keliru dan tekan Save.</p></div>
+      <div class="importbox glass">
+        <div><b>Import file</b><span>File .xlsx dengan nama WB_Bulan_Tahun, contoh WB_Ags_26.xlsx</span></div>
+        <button class="btn primary" type="button" id="btnImport">Impor file .xlsx</button>
+        <input type="file" id="fileIn" accept=".xlsx,.xlsm" hidden>
+      </div>
+      <div id="detailBody"></div>
+    </section>
+  </main>
+
+  <div class="dockzone" id="dockZone"><nav class="dock" aria-label="Halaman">
+    <button class="dk" type="button" data-page="tabel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><path d="M3.5 10h17M10 10v9.5"/></svg><span>Tabel</span></button>
+    <button class="dk" type="button" data-page="grafik"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 20V11M12 20V5M19 20v-6"/></svg><span>Grafik</span></button>
+    <button class="dk" type="button" data-page="detail" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17z"/><path d="M14 8l3 3"/></svg><span>Detail</span></button>
+  </nav></div>
+</div>
+<div id="toast" class="toast" role="status" hidden></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="../js/dashboard.js"></script>
+</body>
+</html>

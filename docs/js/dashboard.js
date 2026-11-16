@@ -108,12 +108,26 @@ function stSave(){
 }
 addEventListener('pagehide',stSave);
 let seq=0;
+function blankInput(){
+  const z=()=>({ptt:0,ptb:0,p:0,d:0,t:0}),pr=()=>({distim:0,disbar:0});
+  const o={volume:VOLSRC.map(()=>0),rekening:0,suplisi:0,restitusi:0,tkKomersial:0,tkSosial:0,sweeping:0,tkGratis:0,pmk:0,asumsiPmk:0,ops:{},
+    gmb:GMB_SIZES.map(z),cm:CM_SIZES.map(z),cs:CM_SIZES.map(z),flush:pr(),tersier:pr(),penghubung:pr(),curi:{timur:0,barat:0},salahPct:0,
+    bocorSR:pr(),bocorTD:pr(),luapTangki:0,luapReservoir:0};
+  OPS.forEach(([k])=>{o.ops[k]=z()});return o;
+}
 
 /* ================= database lokal (localStorage browser) =================
    Semua bulan disimpan di satu kunci: {months:{ "2026-08": <data input>, ... }}
    Tidak butuh server: cocok untuk GitHub Pages. Data hanya ada di browser ini. */
 const DEMO_STORE='neracaAir.demo.v1';
 const MV={Ags:['Ags','Agu','Aug'],Mei:['Mei','May'],Okt:['Okt','Oct'],Des:['Des','Dec']};
+/* Baca bulan+tahun dari nama file: WB_Des_26, WB_Desember_2026, wb-dec-26, dst. */
+const MALIAS=[['jan','januari','january'],['feb','februari','february','pebruari'],['mar','maret','march'],['apr','april'],['mei','may'],['jun','juni','june'],['jul','juli','july'],['ags','agu','agustus','aug','august'],['sep','sept','september'],['okt','oct','oktober','october'],['nov','november','nopember'],['des','dec','desember','december']];
+function fileKey(name){
+  const m=/WB[\s_\-]*([A-Za-z]+)[\s_\-]*(\d{4}|\d{2})(?!\d)/i.exec(name);if(!m)return null;
+  const i=MALIAS.findIndex(a=>a.includes(m[1].toLowerCase()));if(i<0)return null;
+  const y=m[2].length===2?2000+ +m[2]:+m[2];return key(y,i+1);
+}
 function bases(k){const{y,m}=pk(k);const yy=String(y).slice(2);return (MV[MON[m-1]]||[MON[m-1]]).map(n=>'WB_'+n+'_'+yy)}
 let memStore={months:{}};   // cadangan bila localStorage diblokir
 function readStore(){
@@ -134,7 +148,7 @@ async function loadMonth(k){
 }
 async function refreshAvail(){
   S.avail=new Set(Object.keys(readStore().months));
-  Object.keys(cache).forEach(k=>{if(cache[k])S.avail.add(k)});
+  Object.keys(cache).forEach(k=>{if(cache[k]&&cache[k].src!=='new')S.avail.add(k)});
 }
 async function persist(k,inp){
   const st=readStore();st.months[k]=clone(inp);st.savedAt=Date.now();
@@ -200,18 +214,21 @@ $('#monthPanel').addEventListener('click',e=>{
 }
 if($('#btnImport'))$('#btnImport').onclick=()=>$('#fileIn').click();
 if($('#fileIn'))$('#fileIn').onchange=async e=>{
-  const f=e.target.files[0];e.target.value='';if(!f)return;
-  try{
-    if(typeof XLSX==='undefined')throw new Error('Pustaka pembaca Excel belum termuat');
-    const inp=parseWB(XLSX.read(new Uint8Array(await f.arrayBuffer()),{type:'array'}));
-    const m=/WB_([A-Za-z]{3})_(\d{2})/i.exec(f.name);let k=null;
-    if(m){const i=MON.findIndex(n=>(MV[n]||[n]).some(a=>a.toLowerCase()===m[1].toLowerCase()));if(i>=0)k=key(2000+ +m[2],i+1)}
-    if(!k)throw new Error('Nama file harus berformat WB_Ags_26.xlsx agar bulannya terbaca');
-    cache[k]={inp,src:'local'};S.sel.add(k);S.years.add(pk(k).y);
-    let where=null;try{where=await persist(k,inp)}catch(er){toast('File terbaca, tetapi gagal disimpan: '+er.message,true)}
-    if(where)toast(lab(k)+' diimpor dan disimpan ke '+where);else if(!$('#toast').classList.contains('err'))toast(lab(k)+' diimpor (belum tersimpan permanen)');
-    await refreshAvail();renderFilters();refresh();
-  }catch(er){toast(er.message,true)}
+  const files=[...e.target.files];e.target.value='';if(!files.length)return;
+  const ok=[],bad=[];
+  for(const f of files){
+    try{
+      if(typeof XLSX==='undefined')throw new Error('Pustaka pembaca Excel belum termuat');
+      const inp=parseWB(XLSX.read(new Uint8Array(await f.arrayBuffer()),{type:'array'}));
+      const k=fileKey(f.name);
+      if(!k)throw new Error('nama harus WB_Bulan_Tahun, mis. WB_Des_26.xlsx');
+      cache[k]={inp,src:'local'};S.sel.add(k);S.years.add(pk(k).y);
+      await persist(k,inp);ok.push(lab(k));
+    }catch(er){bad.push(f.name+' ('+er.message+')')}
+  }
+  await refreshAvail();renderFilters();refresh();
+  if(ok.length)toast(ok.join(', ')+' diimpor dan disimpan ke browser ini'+(bad.length?'. Gagal: '+bad.join('; '):''),!!bad.length&&!ok.length);
+  else toast('Gagal: '+bad.join('; '),true);
 };
 
 /* ================= routing (tiap halaman = file HTML sendiri di folder pages/) ================= */
@@ -241,7 +258,7 @@ async function refresh(){
   if(my!==seq)return;
   renderPage();
 }
-const present=()=>[...S.sel].sort().filter(k=>cache[k]);
+const present=()=>[...S.sel].sort().filter(k=>cache[k]&&cache[k].src!=='new');
 const missing=()=>[...S.sel].sort().filter(k=>cache[k]===null);
 function period(){
   const p=present();if(!p.length)return '';
@@ -446,16 +463,22 @@ function updateComputed(){
   $$('#detailBody [data-rv]').forEach(el=>{const[p,inch]=el.dataset.rv.split('|');el.textContent=NF2.format(rowVol(getP(S.draft,p),inch==='1'))});
   const st=$('#dSum');if(st)st.innerHTML=`<div><span>Volume input</span><b>${NF0.format(s.input)}</b></div><div><span>Air berekening</span><b>${NF0.format(s.airBer)}</b></div><div><span>NRW (m³)</span><b>${NF0.format(s.nrw)}</b></div><div><span>NRW (%)</span><b>${fp(s.nrwPct)}</b></div>`;
 }
+function editPanel(){
+  const ys=new Set([...S.years,pk(S.editKey).y,...[...S.avail].map(k=>pk(k).y)]);
+  return [...ys].sort().map(y=>`<h4>${y}</h4><div class="chips c3">`+[...MON.map((n,i)=>[n,i,y]),[MON[0]+" "+String(y+1).slice(2),0,y+1]].map(([n,i,yy])=>{const k=key(yy,i+1);
+    return `<button type="button" class="chip" data-ek="${k}" aria-pressed="${k===S.editKey}" title="${MONF[i]} ${yy}">${n}${S.avail.has(k)?'<i title="Data tersedia"></i>':''}</button>`}).join('')+`</div>`).join('');
+}
 function renderDetail(){
   const body=$('#detailBody');
-  const keys=[...new Set([...present(),...(S.dirty&&S.editKey?[S.editKey]:[])])].sort();
+  if(!S.editKey&&!present().length&&!S.booting){const k=[...S.sel].sort().pop()||key(new Date().getFullYear(),new Date().getMonth()+1);if(!cache[k])cache[k]={inp:blankInput(),src:'new'};S.editKey=k}
+  const keys=[...new Set([...present(),...(S.editKey&&cache[S.editKey]?[S.editKey]:[])])].sort();
   if(!keys.length){body.innerHTML=emptyState();S.draft=null;S.editKey=null;S.dirty=false;return}
   if(!S.editKey||!keys.includes(S.editKey)){S.editKey=keys[keys.length-1];S.draft=null;S.dirty=false}
   if(!S.draft)S.draft=clone(cache[S.editKey].inp);
   if(body.dataset.built===S.editKey+'|'+keys.join(',')&&body.firstChild){updateComputed();return}
   const lock=false;
   body.innerHTML=`<div class="dtools"><div class="dd left" id="ddEdit"><button type="button" id="btnEdit" aria-haspopup="true" aria-expanded="false"${S.dirty?' disabled':''}>Edit bulan <small>${lab(S.editKey)}</small></button>
-        <div class="panel" role="group" aria-label="Pilih bulan yang diedit" hidden><h4>Bulan</h4><div class="chips c3">${keys.map(k=>`<button type="button" class="chip" data-ek="${k}" aria-pressed="${k===S.editKey}">${lab(k)}</button>`).join('')}</div></div></div>
+        <div class="panel" role="group" aria-label="Pilih bulan yang diedit" hidden>${editPanel()}</div></div>
       <span class="hint">${S.dirty?'Simpan atau batalkan perubahan sebelum pindah bulan.':keys.length>1?'Pilih bulan yang mau diedit.':''}</span></div>
     <div class="sumstrip" id="dSum"></div>${buildDetail()}
     <div class="savebar"><span id="saveMsg">${lock?'Akun ini hanya bisa melihat data.':'Belum ada perubahan.'}</span><div class="acts"><button class="btn" type="button" id="btnReset" disabled>Batalkan</button><button class="btn primary" type="button" id="btnSave" disabled>Save</button></div></div>`;
@@ -479,17 +502,17 @@ $('#detailBody')?.addEventListener('change',e=>{
 $('#detailBody')?.addEventListener('click',async e=>{
   const b=e.target.closest('button');if(!b)return;
   if(b.id==='btnEdit'){toggleDD($('#ddEdit'));return}
-  if(b.dataset.ek){S.editKey=b.dataset.ek;S.draft=null;S.dirty=false;$('#detailBody').dataset.built='';closeDD();renderDetail();return}
+  if(b.dataset.ek){const nk=b.dataset.ek;if(S.editKey&&cache[S.editKey]&&cache[S.editKey].src==='new'&&S.editKey!==nk)delete cache[S.editKey];if(!cache[nk]){const st=readStore().months[nk];cache[nk]=st?{inp:clone(st),src:'local'}:{inp:blankInput(),src:'new'}}S.editKey=nk;S.draft=null;S.dirty=false;$('#detailBody').dataset.built='';closeDD();renderDetail();return}
   if(b.id==='btnReset'){S.draft=null;S.dirty=false;$('#detailBody').dataset.built='';renderDetail()}
   if(b.id==='btnSave'){
     b.disabled=true;$('#saveMsg').textContent='Menyimpan…';
     try{
       const where=await persist(S.editKey,S.draft);
-      cache[S.editKey]={inp:clone(S.draft),src:'local'};S.dirty=false;S.avail.add(S.editKey);
+      cache[S.editKey]={inp:clone(S.draft),src:'local'};S.dirty=false;S.avail.add(S.editKey);S.sel.add(S.editKey);S.years.add(pk(S.editKey).y);
       $$('#detailBody .in.chg').forEach(i=>i.classList.remove('chg'));
       $('#saveMsg').textContent=where?'Tersimpan ke '+where+'.':'Tersimpan sementara di halaman ini saja.';
       toast(where?lab(S.editKey)+' tersimpan ke '+where:'Tidak ada penyimpanan aktif, perubahan hanya di halaman ini',!where);
-      markDirty();renderFilters();
+      markDirty();renderFilters();{const pn=$('#ddEdit .panel');if(pn)pn.innerHTML=editPanel()}
     }catch(er){
       $('#saveMsg').textContent='Gagal menyimpan.';b.disabled=false;
       toast('Gagal menyimpan: '+(er&&er.message?er.message:'kesalahan tak dikenal'),true);

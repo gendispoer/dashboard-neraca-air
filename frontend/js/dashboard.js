@@ -101,158 +101,51 @@ const SS='neracaAir.state';
 function stLoad(){
   try{const o=JSON.parse(sessionStorage.getItem(SS)||'null');if(!o)return;
     (o.years||[]).forEach(y=>S.years.add(y));(o.sel||[]).forEach(k=>S.sel.add(k));
-    Object.entries(o.imp||{}).forEach(([k,inp])=>{cache[k]={inp,src:'import'};S.avail.add(k)})}catch(e){}
+    }catch(e){}
 }
 function stSave(){
-  try{const imp={};Object.keys(cache).forEach(k=>{if(cache[k]&&cache[k].src==='import')imp[k]=cache[k].inp});
-    sessionStorage.setItem(SS,JSON.stringify({years:[...S.years],sel:[...S.sel],imp}))}catch(e){}
+  try{sessionStorage.setItem(SS,JSON.stringify({years:[...S.years],sel:[...S.sel]}))}catch(e){}
 }
 addEventListener('pagehide',stSave);
-let mcp=null,db=null,usr=null,seq=0;
-const DRIVE='Google Drive';
+let seq=0;
 
-/* ================= Google Drive ================= */
+/* ================= database lokal (localStorage browser) =================
+   Semua bulan disimpan di satu kunci: {months:{ "2026-08": <data input>, ... }}
+   Tidak butuh server: cocok untuk GitHub Pages. Data hanya ada di browser ini. */
+const DEMO_STORE='neracaAir.demo.v1';
 const MV={Ags:['Ags','Agu','Aug'],Mei:['Mei','May'],Okt:['Okt','Oct'],Des:['Des','Dec']};
 function bases(k){const{y,m}=pk(k);const yy=String(y).slice(2);return (MV[MON[m-1]]||[MON[m-1]]).map(n=>'WB_'+n+'_'+yy)}
-const sch={};
-async function schemaOf(tool){
-  if(sch[tool])return sch[tool];
-  try{const d=await mcp.describeTool(DRIVE,tool);sch[tool]=d.inputSchema||{}}catch(e){return null}
-  return sch[tool];
+let memStore={months:{}};   // cadangan bila localStorage diblokir
+function readStore(){
+  try{const o=JSON.parse(localStorage.getItem(DEMO_STORE)||'null');if(o&&o.months)return o}catch(e){}
+  return memStore;
 }
-const pick=(s,c,fb)=>{const p=s&&s.properties?Object.keys(s.properties):[];return c.find(x=>p.includes(x))||fb};
-const call=(tool,input)=>mcp.callTool(DRIVE,tool,input,{cache:false});
-const textOf=r=>{if(typeof r.payload==='string')return r.payload;const b=(r.content||[]).find(x=>x.type==='text');return b?b.text:''};
-function asFiles(r){
-  const p=r.payload;let a=Array.isArray(p)?p:(p&&(p.files||p.items||p.results||p.data))||[];
-  if(!Array.isArray(a))a=[];
-  if(!a.length){try{const j=JSON.parse(textOf(r));a=Array.isArray(j)?j:(j.files||j.items||[])}catch(e){}}
-  return a.map(f=>({id:f.id||f.fileId||f.file_id,name:String(f.name||f.title||''),time:Date.parse(f.modifiedTime||f.modified_time||f.modifiedDate||'')||0})).filter(f=>f.id);
+function writeStore(o){
+  memStore=o;
+  try{localStorage.setItem(DEMO_STORE,JSON.stringify(o));return true}catch(e){return false}
 }
-async function driveSearch(b){
-  const s=await schemaOf('search_files');const qk=pick(s,['query','q','searchQuery','search_query'],'query');
-  let lastErr=null,ok=false;
-  for(const q of ["name contains '"+b+"'","title contains '"+b+"'",b]){
-    try{const r=await call('search_files',{[qk]:q});ok=true;
-      const f=asFiles(r).filter(x=>x.name.toLowerCase().startsWith(b.toLowerCase()));if(f.length)return f}
-    catch(e){lastErr=e;if(e&&['server_not_connected','needs_reauth','not_in_manifest','approval_required','consent_required','blocked_by_policy','selection_required'].includes(e.code))throw e}
-  }
-  if(!ok&&lastErr)throw lastErr;
-  return [];
-}
-async function driveText(id){
-  const s=await schemaOf('read_file_content');const ik=pick(s,['fileId','file_id','id'],'fileId');
-  const r=await call('read_file_content',{[ik]:id});const p=r.payload;
-  if(typeof p==='string')return p;
-  if(p&&typeof p.content==='string')return p.content;
-  if(p&&typeof p.text==='string')return p.text;
-  return textOf(r);
-}
-async function driveBytes(id){
-  const s=await schemaOf('download_file_content');const ik=pick(s,['fileId','file_id','id'],'fileId');
-  const r=await call('download_file_content',{[ik]:id});const p=r.payload;let b=null;
-  if(typeof p==='string'&&p.length>100)b=p;
-  else if(p){b=p.content||p.data||p.base64||p.contentBase64||p.base64Content||null;if(typeof b!=='string')b=null}
-  if(!b){const x=(r.content||[]).find(c=>c.type==='resource'&&c.resource&&c.resource.blob);if(x)b=x.resource.blob}
-  if(!b){const x=(r.content||[]).find(c=>c.type==='text'&&c.text&&c.text.length>100);if(x)b=x.text}
-  if(!b)throw new Error('Isi file dari Drive tidak terbaca');
-  const bin=atob(b.replace(/^data:[^,]*,/,'').replace(/\s+/g,''));const u=new Uint8Array(bin.length);
-  for(let i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);return u;
-}
-async function driveLoad(k){
-  let files=[];
-  for(const b of bases(k)){files=await driveSearch(b);if(files.length)break}
-  if(!files.length)return null;
-  const js=files.filter(f=>/\.dashboard\.json$/i.test(f.name)).sort((a,b)=>b.time-a.time).slice(0,6);
-  let best=null;
-  for(const f of js){
-    try{const t=await driveText(f.id);const o=JSON.parse(t.slice(t.indexOf('{'),t.lastIndexOf('}')+1));
-      if(o&&o.inp&&(!best||(o.savedAt||0)>(best.savedAt||0)))best=o}catch(e){}
-  }
-  if(best)return {inp:best.inp,src:'drive'};
-  const x=files.filter(f=>/\.xls[xm]$/i.test(f.name)||!/\./.test(f.name)).sort((a,b)=>b.time-a.time)[0];
-  if(x){const u=await driveBytes(x.id);return {inp:parseWB(XLSX.read(u,{type:'array'})),src:'drive'}}
-  return null;
-}
-async function driveSave(k,inp){
-  const s=await schemaOf('create_file');
-  const props=(s&&s.properties)||{};
-  const nameK=pick(s,['title','name','fileName','filename'],'title');
-  const bodyK=pick(s,['base64Content','content','data','body','text'],'content');
-  const mimeK=pick(s,['contentMimeType','mimeType','mime_type','contentType'],'mimeType');
-  const desc=String((props[bodyK]&&props[bodyK].description)||'')+bodyK;
-  const text=JSON.stringify({version:1,key:k,savedAt:Date.now(),inp});
-  const body=/base64/i.test(desc)?btoa(unescape(encodeURIComponent(text))):text;
-  const name=base(k)+'.dashboard.json';
-  try{await call('create_file',{[nameK]:name,[bodyK]:body,[mimeK]:'application/json'})}
-  catch(e){if(e&&e.code==='tool_error')await call('create_file',{[nameK]:name,[bodyK]:body,[mimeK]:'text/plain'});else throw e}
-}
-async function driveList(){
-  const out=new Set();
-  for(const q of ["name contains 'WB_'","title contains 'WB_'",'WB_']){
-    try{const s=await schemaOf('search_files');const qk=pick(s,['query','q','searchQuery','search_query'],'query');
-      const r=await call('search_files',{[qk]:q});
-      asFiles(r).forEach(f=>{const m=/^WB_([A-Za-z]{3})_(\d{2})/.exec(f.name);if(!m)return;
-        const i=MON.findIndex(n=>(MV[n]||[n]).some(a=>a.toLowerCase()===m[1].toLowerCase()));
-        if(i>=0)out.add(key(2000+ +m[2],i+1))});
-      if(out.size)return out}catch(e){if(e&&e.code&&e.code!=='tool_error')throw e}
-  }
-  return out;
-}
-function driveWhy(e){
-  const c=e&&e.code;
-  if(c==='server_not_connected'||c==='selection_required')return 'Google Drive belum tertaut. Tautkan di claude.ai: Settings → Connectors.';
-  if(c==='needs_reauth')return 'Sambungan Google Drive kedaluwarsa. Hubungkan ulang di Settings → Connectors.';
-  if(c==='not_in_manifest'||c==='approval_required'||c==='consent_required')return 'Dashboard belum diizinkan membaca Google Drive. Tekan "Tautkan Drive" lalu pilih Allow.';
-  if(c==='blocked_by_policy')return 'Organisasi memblokir akses Google Drive untuk dashboard ini.';
-  return 'Google Drive tidak bisa dibaca'+(e&&e.message?' ('+e.message+')':'')+'.';
-}
-
-/* ================= dashboard db (cadangan bila Drive belum tertaut) ================= */
-async function dbLoad(k){const s=await db.collection('months').doc(k).get();return s.exists?{inp:s.data().inp,src:'db'}:null}
-async function dbSave(k,inp){await db.collection('months').doc(k).set({inp,savedAt:Date.now()})}
-async function dbList(){const s=await db.collection('months').get();return new Set(s.docs.map(d=>d.id))}
 
 /* ================= data layer ================= */
-async function backendLoad(k){
-  if(S.mode==='drive'){
-    try{return await driveLoad(k)}
-    catch(e){
-      if(e&&e.code&&e.code!=='tool_error'&&e.code!=='server_unavailable'){S.driveMsg=driveWhy(e);S.mode=db?'db':'none';setStatus()}
-      else throw e;
-    }
-  }
-  if(S.mode==='db'&&db)return dbLoad(k);
-  return null;
-}
 async function loadMonth(k){
-  if(k in cache)return cache[k];
-  let r=null;
-  try{r=await backendLoad(k)}catch(e){toast('Gagal membaca '+base(k)+': '+((e&&e.message)||'kesalahan tak dikenal'),true);return undefined}
-  cache[k]=r;return r;
+  if(cache[k])return cache[k];
+  const inp=readStore().months[k];
+  cache[k]=inp?{inp:clone(inp),src:'local'}:null;
+  return cache[k];
 }
 async function refreshAvail(){
-  try{S.avail=S.mode==='drive'?await driveList():(S.mode==='db'&&db?await dbList():new Set())}catch(e){S.avail=new Set()}
+  S.avail=new Set(Object.keys(readStore().months));
   Object.keys(cache).forEach(k=>{if(cache[k])S.avail.add(k)});
 }
 async function persist(k,inp){
-  if(S.mode==='drive'){await driveSave(k,inp);return 'Google Drive'}
-  if(S.mode==='db'&&db){if(!S.canWrite)throw new Error('Akun ini tidak punya izin menyimpan');await dbSave(k,inp);return 'penyimpanan dashboard'}
-  return null;
+  const st=readStore();st.months[k]=clone(inp);st.savedAt=Date.now();
+  if(!writeStore(st))throw new Error('Penyimpanan browser penuh atau diblokir');
+  return 'browser ini';
+}
+async function removeMonth(k){
+  const st=readStore();delete st.months[k];writeStore(st);delete cache[k];S.sel.delete(k);
 }
 async function connect(){
-  S.booting=true;setStatus();
-  try{mcp=window.claude&&window.claude.use?await window.claude.use('mcp'):null}catch(e){mcp=null}
-  try{db=window.claude&&window.claude.use?await window.claude.use('db'):null}catch(e){db=null}
-  try{usr=window.claude&&window.claude.use?await window.claude.use('user'):null}catch(e){usr=null}
-  if(usr&&usr.can){try{S.canWrite=usr.can('data.write')!==false}catch(e){}}
-  S.mode=db?'db':'none';
-  if(mcp){
-    try{const l=await mcp.listTools(DRIVE);const sv=(l.servers||[]).find(x=>x.server===DRIVE);
-      if(sv&&sv.authStatus!=='needs_reauth'&&(sv.tools||[]).length)S.mode='drive';
-      else S.driveMsg=sv&&sv.authStatus==='needs_reauth'?driveWhy({code:'needs_reauth'}):driveWhy({code:'server_not_connected'})}
-    catch(e){S.driveMsg=driveWhy(e)}
-  }else S.driveMsg='Akses Google Drive tidak tersedia di tampilan ini.';
+  S.mode='local';S.canWrite=true;
   await refreshAvail();
   if(!S.sel.size){
     const last=[...S.avail].sort().pop();
@@ -261,25 +154,12 @@ async function connect(){
   }
   S.booting=false;setStatus();renderFilters();refresh();
 }
-async function tryDrive(){
-  if(!mcp){toast('Akses Google Drive tidak tersedia di tampilan ini.',true);return}
-  try{
-    const s=await schemaOf('search_files');const qk=pick(s,['query','q','searchQuery','search_query'],'query');
-    await call('search_files',{[qk]:"name contains 'WB_'"});
-    S.mode='drive';S.driveMsg='';Object.keys(cache).forEach(k=>delete cache[k]);
-    await refreshAvail();setStatus();renderFilters();refresh();toast('Google Drive tertaut');
-  }catch(e){S.driveMsg=driveWhy(e);setStatus();toast(S.driveMsg,true)}
-}
 
 /* ================= status / filter UI ================= */
 function setStatus(){
-  const t=$('#srcText'),b=$('#btnDrive');
-  if(S.booting){t.innerHTML='<span class="dot"></span>Menghubungkan penyimpanan…';b.hidden=true;return}
-  if(S.mode==='drive'){t.innerHTML='<span class="dot ok"></span>Terhubung ke Google Drive · file dibaca dengan format WB_Bulan_Tahun';b.hidden=true}
-  else{
-    t.innerHTML='<span class="dot off"></span>'+esc(S.driveMsg||'Google Drive belum tertaut.')+(S.mode==='db'?' Data dibaca dari penyimpanan dashboard.':' Impor file .xlsx untuk melihat data.');
-    b.hidden=!mcp;
-  }
+  const t=$('#srcText'),b=$('#btnDrive');if(b)b.hidden=true;
+  const n=S.avail.size;
+  t.innerHTML='<span class="dot ok"></span>Mode demo · data tersimpan di browser ini'+(n?' ('+n+' bulan)':' · impor file WB_Bulan_Tahun.xlsx di halaman Detail');
 }
 function yearsList(){
   const now=new Date().getFullYear();let lo=Math.min(now-1,...[...S.avail].map(k=>pk(k).y)),hi=Math.max(now,...[...S.avail].map(k=>pk(k).y));
@@ -317,7 +197,6 @@ $('#monthPanel').addEventListener('click',e=>{
   else return;
   renderFilters();refresh();
 });
-$('#btnDrive').onclick=tryDrive;
 }
 if($('#btnImport'))$('#btnImport').onclick=()=>$('#fileIn').click();
 if($('#fileIn'))$('#fileIn').onchange=async e=>{
@@ -328,7 +207,7 @@ if($('#fileIn'))$('#fileIn').onchange=async e=>{
     const m=/WB_([A-Za-z]{3})_(\d{2})/i.exec(f.name);let k=null;
     if(m){const i=MON.findIndex(n=>(MV[n]||[n]).some(a=>a.toLowerCase()===m[1].toLowerCase()));if(i>=0)k=key(2000+ +m[2],i+1)}
     if(!k)throw new Error('Nama file harus berformat WB_Ags_26.xlsx agar bulannya terbaca');
-    cache[k]={inp,src:'import'};S.sel.add(k);S.years.add(pk(k).y);
+    cache[k]={inp,src:'local'};S.sel.add(k);S.years.add(pk(k).y);
     let where=null;try{where=await persist(k,inp)}catch(er){toast('File terbaca, tetapi gagal disimpan: '+er.message,true)}
     if(where)toast(lab(k)+' diimpor dan disimpan ke '+where);else if(!$('#toast').classList.contains('err'))toast(lab(k)+' diimpor (belum tersimpan permanen)');
     await refreshAvail();renderFilters();refresh();
@@ -370,7 +249,7 @@ function period(){
 }
 function renderNotice(){
   const m=missing();
-  $('#notice').innerHTML=m.length?`<div class="note"><strong>File not found.</strong> ${m.map(k=>esc(base(k))+' ('+lab(k)+')').join(', ')} tidak ada di ${S.mode==='drive'?'Google Drive':'penyimpanan dashboard'}. Bulan ini tidak ikut dihitung.</div>`:'';
+  $('#notice').innerHTML=m.length?`<div class="note"><strong>File not found.</strong> ${m.map(k=>esc(base(k))+' ('+lab(k)+')').join(', ')} belum ada di penyimpanan browser. Bulan ini tidak ikut dihitung.</div>`:'';
 }
 function renderPage(){
   if(!S.years||$('#app').hidden)return;
@@ -525,7 +404,7 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener&&matchMedia('(prefer
 new MutationObserver(()=>{if(S.page==='grafik')renderGrafik()}).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
 
 /* ----- Detail (edit) ----- */
-const inI=(p,l,w)=>`<input class="in" type="number" step="any" inputmode="decimal" data-p="${p}" aria-label="${esc(l)}" value="${getP(S.draft,p)}"${S.canWrite||S.mode==='drive'?'':' disabled'}>`;
+const inI=(p,l,w)=>`<input class="in" type="number" step="any" inputmode="decimal" data-p="${p}" aria-label="${esc(l)}" value="${getP(S.draft,p)}">`;
 const picTag=t=>t?`<span class="pic">${t}</span>`:'';
 function simple(title,items){
   return `<section class="card"><h3>${title}</h3><div class="scroll"><table class="dt"><thead><tr><th>Uraian</th><th>PIC</th><th class="r">Jumlah</th></tr></thead><tbody>`+
@@ -574,7 +453,7 @@ function renderDetail(){
   if(!S.editKey||!keys.includes(S.editKey)){S.editKey=keys[keys.length-1];S.draft=null;S.dirty=false}
   if(!S.draft)S.draft=clone(cache[S.editKey].inp);
   if(body.dataset.built===S.editKey+'|'+keys.join(',')&&body.firstChild){updateComputed();return}
-  const lock=!(S.canWrite||S.mode==='drive');
+  const lock=false;
   body.innerHTML=`<div class="dtools"><div class="dd left" id="ddEdit"><button type="button" id="btnEdit" aria-haspopup="true" aria-expanded="false"${S.dirty?' disabled':''}>Edit bulan <small>${lab(S.editKey)}</small></button>
         <div class="panel" role="group" aria-label="Pilih bulan yang diedit" hidden><h4>Bulan</h4><div class="chips c3">${keys.map(k=>`<button type="button" class="chip" data-ek="${k}" aria-pressed="${k===S.editKey}">${lab(k)}</button>`).join('')}</div></div></div>
       <span class="hint">${S.dirty?'Simpan atau batalkan perubahan sebelum pindah bulan.':keys.length>1?'Pilih bulan yang mau diedit.':''}</span></div>
@@ -606,14 +485,14 @@ $('#detailBody')?.addEventListener('click',async e=>{
     b.disabled=true;$('#saveMsg').textContent='Menyimpan…';
     try{
       const where=await persist(S.editKey,S.draft);
-      cache[S.editKey]={inp:clone(S.draft),src:where?S.mode:'import'};S.dirty=false;S.avail.add(S.editKey);
+      cache[S.editKey]={inp:clone(S.draft),src:'local'};S.dirty=false;S.avail.add(S.editKey);
       $$('#detailBody .in.chg').forEach(i=>i.classList.remove('chg'));
       $('#saveMsg').textContent=where?'Tersimpan ke '+where+'.':'Tersimpan sementara di halaman ini saja.';
       toast(where?lab(S.editKey)+' tersimpan ke '+where:'Tidak ada penyimpanan aktif, perubahan hanya di halaman ini',!where);
       markDirty();renderFilters();
     }catch(er){
       $('#saveMsg').textContent='Gagal menyimpan.';b.disabled=false;
-      toast('Gagal menyimpan ke '+(S.mode==='drive'?'Google Drive':'penyimpanan')+': '+(er&&er.message?er.message:driveWhy(er)),true);
+      toast('Gagal menyimpan: '+(er&&er.message?er.message:'kesalahan tak dikenal'),true);
     }
   }
 });
